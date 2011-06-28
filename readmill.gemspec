@@ -5,7 +5,7 @@ $:.unshift lib unless $:.include?(lib)
 require 'readmill/version'
 
 Gem::Specification.new do |s|
-  s.name        = "Readmill"
+  s.name        = "readmill"
   s.version     = Readmill::VERSION
   s.platform    = Gem::Platform::RUBY
   
