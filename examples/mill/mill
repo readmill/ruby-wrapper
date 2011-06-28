@@ -1,0 +1,213 @@
+#!/usr/bin/env ruby
+
+require 'readmill'
+require 'active_support/core_ext' # For to_param
+
+OPTIONS = {
+  :id => '262d0ab898861efcb4d6d08008a2b666',
+  :secret => 'a215b64a021caae39b550981c54b4443',
+  :redirect_uri => 'http://thisisnotarealuriandshouldnotbeactuallyusedbutweuseitanyhowsinceourcurrentoauthflowisinsufficient.com'
+}
+
+class SimpleToken
+  class << self
+    def code_url(options)
+      options = { :authorization_endpoint => 'readmill.com' }.merge(options)
+      
+      params = {
+        'client_id' => options[:id],
+        'response_type' => 'code'
+      }
+      
+      params['redirect_uri'] = options[:redirect_uri] if options[:redirect_uri]
+      
+      URI::HTTP.build(:host => options[:authorization_endpoint], :path => '/oauth/authorize', :query => params.to_param)
+    end
+    
+    def create(options)
+      options = { :authorization_endpoint => 'readmill.com' }.merge(options)
+      
+      params = {
+        'client_id' => options[:id],
+        'client_secret' => options[:secret],
+        'grant_type' => 'authorization_code',
+        'code' => options[:code]
+      }
+      
+      params['redirect_uri'] = options[:redirect_uri] if options[:redirect_uri]
+      
+      token = JSON.parse(RestClient.post("#{Readmill.protocol}://#{options[:authorization_endpoint]}/oauth/token", params.to_param, :format => 'application/x-www-form-urlencoded', :accept => :json))
+      
+      self.new(token, options)
+    end
+  end
+  
+  def initialize(token, options)
+    @token, @options = token, { :authorization_endpoint => 'readmill.com' }.merge(options)
+    
+    @updated_at = Time.now
+  end
+  
+  def expires_at
+    @updated_at + @token['expires_in']
+  end
+  
+  def expired?
+    Time.now > self.expires_at
+  end
+  
+  def refresh!
+    params = self.public_params.merge('grant_type' => 'refresh_token', 'client_secret' => @options[:secret], 'refresh_token' => @token['refresh_token'])
+    url = "#{Readmill.protocol}://#{@options[:authorization_endpoint]}/oauth/token"
+    
+    json = RestClient.post(url, params.to_param, :content_type => 'application/x-www-form-urlencoded', :accept => :json)
+    
+    @token, @updated_at = JSON.parse(json), Time.now
+    
+    File.open('.mill', 'w+') do |f|
+      f.puts(json)
+    end
+    
+    
+    return true
+  end
+  
+  def public_params
+    { :client_id => @options[:id] }
+  end
+  
+  def public_or_private_params
+    self.private_params
+  end
+  
+  def private_params
+    self.refresh! if self.expired?
+    
+    { :client_id => @options[:id], :access_token => @token['access_token'] }
+  end
+  
+  def inspect
+    "<#{self.class} '#{@token['access_token']}'>"
+  end
+end
+
+begin
+  File.open('.mill', 'r') do |f|
+    @token = SimpleToken.new(JSON.parse(f.read), OPTIONS)
+  end
+rescue Errno::ENOENT
+  puts "Go to '#{SimpleToken.code_url(OPTIONS)}' and type in code"
+  code = $stdin.gets.chomp
+  
+  @token = SimpleToken.create(OPTIONS.merge(:code => code))
+end
+
+@token.refresh!
+
+@client = Readmill::API.new(:token => @token)
+
+book = (ARGV[1 .. -1] || []).each_slice(2).map do |param, value|
+  case param
+  when '--author'
+    [:author, value]
+  when '--title'
+    [:title, value]
+  when '--isbn'
+    [:isbn, value]
+  else
+    puts "Invalid parameter #{param} #{value}"
+  end
+end.reduce({}) do |hash, value|
+  hash[value[0]] = value[1]; hash
+end
+
+case ARGV[0]
+when 'book'
+  @book = @client.books.match(book)
+  
+  if @book
+    puts " --- #{@book.title} (#{@book.id}) --- "
+    puts "\tby #{@book.author}"
+  else
+    puts "Could not find that book on Readmill, but you could add it."
+  end
+when 'read'
+  @book = @client.books.create(book)
+  @readings = @client.users.current.readings
+  
+  @reading = @readings.select { |x| x.book.id == @book.id }[0]
+  
+  if @reading
+    @reading.state = :open
+    @reading.save
+  else
+    @reading = @book.add_reading(:state => :open, :private => false)
+  end
+  
+  identifier = rand().to_s
+  
+  print "How many pages does the book have? "
+  total = $stdin.gets.to_i
+  
+  loop do
+    print "At what page are you? "
+    page = $stdin.gets.to_i
+    
+    progress = page.to_f / total.to_f
+    
+    @reading.ping(:identifier => identifier, :progress => progress)
+    
+    puts "Ping:ed Readmill at #{progress * 100}%"
+    
+    if page == total
+      puts "Write a closing remark!"
+      
+      @reading.closing_remark = $stdin.gets.chomp
+      @reading.state = :finished
+      @reading.save
+      
+      exit
+    end
+  end
+when 'reading'
+  @book = @client.books.match(book)
+  @readings = @client.users.current.readings
+  
+  @reading = @readings.select { |x| x.book.id == @book.id }[0]
+  
+  if @reading
+    puts " --- #{@reading.book.title} by #{@reading.book.author} --- "
+    
+    case @reading.state
+    when :interesting
+      puts "You are interested in this book."
+    when :abandoned
+      puts "You have abandoned reading this book."
+    when :finished
+      puts "You have finished reading this book."
+    when :open
+      puts "You are in the progress of reading this book."
+    else
+      puts "Faulty state ... (Bug) "
+    end
+  else
+    puts "You are not reading that book, yet."
+  end
+when 'readings'
+  @readings = @client.users.current.readings
+  
+  puts " --- Abandoned --- "
+  @readings.select { |x| x.state == :abandoned }.each { |x| puts "#{x.book.title} by #{x.book.author}" }
+  
+  puts " --- Finished --- "
+  @readings.select { |x| x.state == :finished }.each { |x| puts "#{x.book.title} by #{x.book.author}" }
+  
+  puts " --- Interesting --- "
+  @readings.select { |x| x.state == :interesting }.each { |x| puts "#{x.book.title} by #{x.book.author}" }
+  
+  puts " --- Open --- "
+  @readings.select { |x| x.state == :open }.each { |x| puts "#{x.book.title} by #{x.book.author}" }
+else
+  puts 'Proper usage is ...'
+end
+
