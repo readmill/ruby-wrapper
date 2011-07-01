@@ -4,9 +4,11 @@ require 'readmill'
 require 'active_support/core_ext' # For to_param
 
 OPTIONS = {
-  :id => '262d0ab898861efcb4d6d08008a2b666',
-  :secret => 'a215b64a021caae39b550981c54b4443',
-  :redirect_uri => 'http://thisisnotarealuriandshouldnotbeactuallyusedbutweuseitanyhowsinceourcurrentoauthflowisinsufficient.com'
+  :id => 'CLIENT_ID',
+  :secret => 'CLIENT_SECRET',
+  :redirect_uri => 'REDIRECT_URI',
+  :endpoint => 'api.readmill.com',
+  :authorization_endpoint => 'readmill.com'
 }
 
 class SimpleToken
@@ -83,7 +85,7 @@ class SimpleToken
   def private_params
     self.refresh! if self.expired?
     
-    { :client_id => @options[:id], :access_token => @token['access_token'] }
+    { :access_token => @token['access_token'] }
   end
   
   def inspect
