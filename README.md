@@ -109,11 +109,3 @@ REST API Documentation
 
 For more information about the Readmill REST API, read
 [https://github.com/Readmill/API/wiki](https://github.com/Readmill/API/wiki).
-
-
-Need an invite?
---------------------------------------------------------------------------------
-
-Send a mail to jens at readmill.com with a little info about what you are
-thinking of building and we will send you an invite code as soon as possible.
-
